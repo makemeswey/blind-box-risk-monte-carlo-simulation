@@ -20,10 +20,19 @@ class SimulationRun:
     seed: int | None
     budget: float | None = None
     params: dict | None = None
+    # (num_simulations, num_figures): box index at which the k-th distinct
+    # figure arrived. The last column is boxes_required. Feeds the duplicate
+    # analysis; set track_milestones=False to drop it on very large runs.
+    milestones: np.ndarray | None = None
 
     @property
     def boxes(self) -> np.ndarray:
         return self.results["boxes_required"].to_numpy()
+
+    def require_milestones(self) -> np.ndarray:
+        if self.milestones is None:
+            raise ValueError("Run was simulated with track_milestones=False")
+        return self.milestones
 
     @property
     def cost(self) -> np.ndarray:
@@ -43,6 +52,7 @@ def _chunk_size(collection: Collection) -> int:
 
 
 def _simulate_batch(collection: Collection, num_simulations: int, rng: np.random.Generator, chunk: int) -> np.ndarray:
+    """Milestones for `num_simulations` runs: box index of each k-th new figure."""
     n = collection.num_figures
     first_seen = np.full((num_simulations, n), -1, dtype=np.int64)
     active = np.arange(num_simulations)
@@ -64,10 +74,12 @@ def _simulate_batch(collection: Collection, num_simulations: int, rng: np.random
         opened += chunk
         active = active[(first_seen[active] < 0).any(axis=1)]
 
-    return first_seen.max(axis=1) + 1
+    # Sorting each row turns "which box first showed figure i" into "which box
+    # produced the k-th distinct figure" — the collection trajectory.
+    return np.sort(first_seen, axis=1) + 1
 
 
-def simulate(collection: Collection, num_simulations: int = 10_000, seed: int | None = None, budget: float | None = None, params: dict | None = None, batch_simulations: int = BATCH_SIMULATIONS) -> SimulationRun:
+def simulate(collection: Collection, num_simulations: int = 10_000, seed: int | None = None, budget: float | None = None, params: dict | None = None, batch_simulations: int = BATCH_SIMULATIONS, track_milestones: bool = True) -> SimulationRun:
     if num_simulations < 1:
         raise ValueError("num_simulations must be >= 1")
 
@@ -81,7 +93,8 @@ def simulate(collection: Collection, num_simulations: int = 10_000, seed: int | 
         batches.append(_simulate_batch(collection, size, rng, chunk))
         remaining -= size
 
-    boxes = np.concatenate(batches)
+    milestones = np.concatenate(batches)
+    boxes = milestones[:, -1]
     n = collection.num_figures
     results = pd.DataFrame(
         {
@@ -93,7 +106,15 @@ def simulate(collection: Collection, num_simulations: int = 10_000, seed: int | 
             "total_cost": boxes * collection.box_price,
         }
     )
-    return SimulationRun(collection, results, num_simulations, seed, budget, params)
+    return SimulationRun(
+        collection,
+        results,
+        num_simulations,
+        seed,
+        budget,
+        params,
+        milestones if track_milestones else None,
+    )
 
 
 def save_run(conn, run: SimulationRun) -> int:

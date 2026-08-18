@@ -1,7 +1,7 @@
-CLAUDE.md
 venv
 src/database/__pycache__
 src/data/__pycache__
 src/probability/__pycache__
 src/simulation/__pycache__
 src/analysis/__pycache__
+src/dashboard/__pycache__
